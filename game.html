@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>躲避障碍物游戏</title>
+    <style>
+        /* 游戏容器样式 */
+        #game-container {
+            width: 400px;
+            height: 600px;
+            border: 2px solid black;
+            position: relative;
+            margin: 0 auto;
+            touch-action: none; /* 防止浏览器默认触摸行为 */
+        }
+        /* 玩家角色样式 */
+        #player {
+            width: 50px;
+            height: 10px;
+            background-color: black;
+            position: absolute;
+            bottom: 20px;
+            left: 175px;
+            transition: left 0.05s linear;
+            touch-action: none; /* 防止浏览器默认触摸行为 */
+        }
+        /* 障碍物样式 */
+        .obstacle {
+            width: 30px;
+            height: 30px;
+            background-color: white;
+            border: 1px solid black;
+            position: absolute;
+            top: 0;
+            box-sizing: border-box;
+        }
+        .obstacle.square {
+            background-color: white;
+            border: 1px solid black;
+        }
+        .obstacle.circle {
+            border-radius: 50%;
+            background-color: rgb(42, 26, 26);
+        }
+        .obstacle.triangle {
+            background-color: black;
+            clip-path: polygon(50% 0%, 0% 100%, 100% 100%);
+            border: none;
+        }
+        .obstacle.star {
+            background-color: rgb(37, 35, 35);
+            border: 3px solid black;
+            clip-path: polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%);
+        }
+        /* 开始和重新开始按钮样式 */
+        #start-btn, #restart-btn {
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            padding: 10px 20px;
+            background-color: black;
+            color: white;
+            border: none;
+            cursor: pointer;
+            display: none;
+            -webkit-tap-highlight-color: transparent; /* 移除移动端点击高亮 */
+        }
+        /* 暂停按钮样式 */
+        #pause-btn {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            padding: 5px 10px;
+            background-color: black;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-size: 10px;
+            -webkit-tap-highlight-color: transparent;
+        }
+        /* 分数显示样式 */
+        #score {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            font-size: 20px;
+        }
+        /* 游戏结束提示样式 */
+        #game-over {
+            position: absolute;
+            left: 50%;
+            top: 40%;
+            transform: translate(-50%, -50%);
+            font-size: 30px;
+            display: none;
+        }
+        /* 重新开始按钮置顶 */
+        #restart-btn {
+            z-index: 999;
+        }
+    </style>
+</head>
+<body>
+    <!-- 游戏主容器 -->
+    <div id="game-container">
+        <button id="restart-btn">重新开始</button>
+        <div id="player"></div>
+        <div id="score">时间: 0s</div>
+        <button id="start-btn">开始游戏</button>
+        <button id="pause-btn">暂停</button>
+        <div id="game-over">游戏结束</div>
+    </div>
+
+    <script>
+        // 获取DOM元素
+        const player = document.getElementById('player');
+        const gameContainer = document.getElementById('game-container');
+        const startBtn = document.getElementById('start-btn');
+        const restartBtn = document.getElementById('restart-btn');
+        const pauseBtn = document.getElementById('pause-btn');
+        const gameOver = document.getElementById('game-over');
+        const scoreElement = document.getElementById('score');
+        
+        // 游戏状态变量
+        let gameRunning = false;
+        let gamePaused = false;
+        let startTime;
+        let pauseStartTime;
+        let totalPausedTime = 0;
+        let obstacles = [];
+        let obstacleInterval;
+        let scoreInterval;
+        let fallIntervals = [];
+        let moveLeft = false;
+        let moveRight = false;
+        let moveInterval;
+        let lastFrameTime = 0;
+        let fallSpeed = 5;
+        let isDragging = false;
+        let startX = 0;
+        let playerStartLeft = 0;
+        const targetFPS = 60;
+        const frameInterval = 1000 / targetFPS;
+
+        // 初始化游戏
+        function init() {
+            startBtn.style.display = 'block';
+            restartBtn.style.display = 'none';
+            pauseBtn.style.display = 'none';
+            gameOver.style.display = 'none';
+            player.style.left = '175px';
+            scoreElement.textContent = '时间: 0s';
+            obstacles.forEach(obstacle => obstacle.remove());
+            obstacles = [];
+            fallIntervals.forEach(interval => clearInterval(interval));
+            fallIntervals = [];
+            cancelAnimationFrame(moveInterval);
+            moveLeft = false;
+            moveRight = false;
+            fallSpeed = 5;
+            gamePaused = false;
+            pauseBtn.textContent = '暂停';
+            totalPausedTime = 0;
+        }
+
+        // 开始游戏
+        function startGame() {
+            gameRunning = true;
+            startBtn.style.display = 'none';
+            pauseBtn.style.display = 'block';
+            startTime = Date.now();
+            
+            obstacleInterval = setInterval(createObstacle, 1000);
+            scoreInterval = setInterval(updateScore, 100);
+            
+            function gameLoop(timestamp) {
+                if (!lastFrameTime) lastFrameTime = timestamp;
+                const elapsed = timestamp - lastFrameTime;
+                
+                if (elapsed >= frameInterval && !gamePaused) {
+                    updatePlayerPosition();
+                    lastFrameTime = timestamp;
+                }
+                
+                if (gameRunning) {
+                    moveInterval = requestAnimationFrame(gameLoop);
+                }
+            }
+            moveInterval = requestAnimationFrame(gameLoop);
+        }
+
+        // 暂停/继续游戏
+        function togglePause() {
+            gamePaused = !gamePaused;
+            pauseBtn.textContent = gamePaused ? '取消暂停' : '暂停';
+            
+            if (gamePaused) {
+                pauseStartTime = Date.now();
+                obstacles.forEach(obstacle => {
+                    obstacle.dataset.pausedTop = obstacle.style.top;
+                });
+                clearInterval(obstacleInterval);
+                clearInterval(scoreInterval);
+            } else {
+                totalPausedTime += Date.now() - pauseStartTime;
+                obstacleInterval = setInterval(createObstacle, 1000);
+                scoreInterval = setInterval(updateScore, 100);
+            }
+        }
+
+        // 结束游戏
+        function endGame() {
+            gameRunning = false;
+            clearInterval(obstacleInterval);
+            clearInterval(scoreInterval);
+            cancelAnimationFrame(moveInterval);
+            fallIntervals.forEach(interval => clearInterval(interval));
+            gameOver.style.display = 'block';
+            restartBtn.style.display = 'block';
+            pauseBtn.style.display = 'none';
+            moveLeft = false;
+            moveRight = false;
+        }
+
+        // 创建障碍物
+        function createObstacle() {
+            const obstacle = document.createElement('div');
+            obstacle.className = 'obstacle';
+            
+            const gameTime = Math.floor((Date.now() - startTime - totalPausedTime) / 1000);
+            const availableTypes = [];
+            
+            if (gameTime >= 35) {
+                availableTypes.push('square', 'circle', 'triangle', 'star');
+            } else if (gameTime >= 30) {
+                availableTypes.push('square', 'circle', 'triangle', 'star');
+            } else if (gameTime >= 20) {
+                availableTypes.push('square', 'circle', 'triangle');
+            } else if (gameTime >= 10) {
+                availableTypes.push('square', 'circle');
+            } else {
+                availableTypes.push('square');
+            }
+            
+            const randomType = availableTypes[Math.floor(Math.random() * availableTypes.length)];
+            obstacle.classList.add(randomType);
+            
+            obstacle.style.left = Math.random() * (gameContainer.offsetWidth - 30) + 'px';
+            gameContainer.appendChild(obstacle);
+            obstacles.push(obstacle);
+
+            const speedMultiplier = 1 + Math.floor(gameTime / 15) * 0.05;
+            const currentFallSpeed = fallSpeed * speedMultiplier;
+
+            const fallInterval = setInterval(() => {
+                if (!gameRunning || gamePaused) return;
+                
+                const top = parseInt(obstacle.style.top || 0);
+                if (top >= gameContainer.offsetHeight) {
+                    clearInterval(fallInterval);
+                    obstacle.remove();
+                    obstacles = obstacles.filter(o => o !== obstacle);
+                    fallIntervals = fallIntervals.filter(i => i !== fallInterval);
+                } else {
+                    obstacle.style.top = (top + currentFallSpeed) + 'px';
+                    checkCollision(obstacle);
+                }
+            }, 20);
+            
+            fallIntervals.push(fallInterval);
+        }
+
+        // 检查碰撞
+        function checkCollision(obstacle) {
+            const playerRect = player.getBoundingClientRect();
+            const obstacleRect = obstacle.getBoundingClientRect();
+
+            if (playerRect.left < obstacleRect.right &&
+                playerRect.right > obstacleRect.left &&
+                playerRect.top < obstacleRect.bottom &&
+                playerRect.bottom > obstacleRect.top) {
+                endGame();
+            }
+        }
+
+        // 更新分数（游戏时间）
+        function updateScore() {
+            if (!gamePaused) {
+                const elapsed = Math.floor((Date.now() - startTime - totalPausedTime) / 1000);
+                scoreElement.textContent = `时间: ${elapsed}s`;
+            }
+        }
+
+        // 更新玩家位置
+        function updatePlayerPosition() {
+            if (!gameRunning || gamePaused) return;
+            
+            const left = parseInt(player.style.left || 175);
+            const moveSpeed = 8;
+            
+            if (moveLeft && left > 0) {
+                player.style.left = Math.max(0, left - moveSpeed) + 'px';
+            }
+            if (moveRight && left < gameContainer.offsetWidth - 50) {
+                player.style.left = Math.min(gameContainer.offsetWidth - 50, left + moveSpeed) + 'px';
+            }
+        }
+
+        // 触摸事件处理
+        player.addEventListener('touchstart', (e) => {
+            if (!gameRunning || gamePaused) return;
+            e.preventDefault();
+            isDragging = true;
+            startX = e.touches[0].clientX;
+            playerStartLeft = parseInt(player.style.left || 175);
+        });
+
+        document.addEventListener('touchmove', (e) => {
+            if (!isDragging || !gameRunning || gamePaused) return;
+            e.preventDefault();
+            const deltaX = e.touches[0].clientX - startX;
+            const newLeft = Math.max(0, Math.min(gameContainer.offsetWidth - 50, playerStartLeft + deltaX));
+            player.style.left = newLeft + 'px';
+        });
+
+        document.addEventListener('touchend', () => {
+            isDragging = false;
+        });
+
+        document.addEventListener('touchcancel', () => {
+            isDragging = false;
+        });
+
+        // 键盘事件处理
+        document.addEventListener('keydown', (e) => {
+            if (!gameRunning || gamePaused) return;
+            
+            if (e.key === 'ArrowLeft') {
+                moveLeft = true;
+            }
+            if (e.key === 'ArrowRight') {
+                moveRight = true;
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            if (e.key === 'ArrowLeft') {
+                moveLeft = false;
+            }
+            if (e.key === 'ArrowRight') {
+                moveRight = false;
+            }
+        });
+
+        // 添加按钮点击事件监听器
+        startBtn.addEventListener('click', startGame);
+        restartBtn.addEventListener('click', () => {
+            init();
+            startGame();
+        });
+        pauseBtn.addEventListener('click', togglePause);
+
+        // 初始化游戏
+        init();
+    </script>
+</body>
+</html>
